@@ -203,18 +203,17 @@ pub async fn refresh_post(req: HttpRequest, state: web::Data<AppState>) -> AppRe
     // Blacklist the used refresh token (single-use rotation)
     let state_into = state.clone();
     let claims_into = claims.clone();
-    let refresh_blacklist_fut =
-        web::block(move || state_into.blacklist_token(&claims_into.jti, claims_into.exp));
-    let mut access_blacklist_fut = None;
+    web::block(move || state_into.blacklist_token(&claims_into.jti, claims_into.exp)).await??;
 
     // Blacklist the refreshed token, if it hasn't already expired
     let access_token = cookie_value(&req, ACCESS_COOKIE).ok_or(AppError::AuthMissingToken)?;
     if let Ok(access_claims) = verify_token(&state, &access_token) {
         let state_into = state.clone();
         let access_claims_into = access_claims.clone();
-        access_blacklist_fut = Some(web::block(move || {
+        web::block(move || {
             state_into.blacklist_token(&access_claims_into.jti, access_claims_into.exp)
-        }));
+        })
+        .await??;
     }
 
     let new_access = make_token(&state, &claims.sub, &claims.username, TokenKind::Access)?;
@@ -233,11 +232,6 @@ pub async fn refresh_post(req: HttpRequest, state: web::Data<AppState>) -> AppRe
         state.config.use_secure_cookies,
     );
 
-    refresh_blacklist_fut.await??;
-    if let Some(fut) = access_blacklist_fut {
-        fut.await??
-    }
-
     Ok(HttpResponse::Ok()
         .cookie(access_cookie)
         .cookie(refresh_cookie)
@@ -248,34 +242,23 @@ pub async fn refresh_post(req: HttpRequest, state: web::Data<AppState>) -> AppRe
 
 pub async fn blacklist_tokens(req: &HttpRequest, state: web::Data<AppState>) -> AppResult<()> {
     // Blacklist the access token if present and valid
-    let mut access_blacklist_fut = None;
     if let Some(token) = cookie_value(req, ACCESS_COOKIE) {
         if let Ok(claims) = verify_token(&state, &token) {
             let state_into = state.clone();
             let claims_into = claims.clone();
-            access_blacklist_fut = Some(web::block(move || {
-                state_into.blacklist_token(&claims_into.jti, claims_into.exp)
-            }));
+            web::block(move || state_into.blacklist_token(&claims_into.jti, claims_into.exp))
+                .await??;
         }
     }
 
     // Blacklist the refresh token if present and valid
-    let mut refresh_blacklist_fut = None;
     if let Some(token) = cookie_value(&req, REFRESH_COOKIE) {
         if let Ok(claims) = verify_token(&state, &token) {
             let state_into = state.clone();
             let claims_into = claims.clone();
-            refresh_blacklist_fut = Some(web::block(move || {
-                state_into.blacklist_token(&claims_into.jti, claims_into.exp)
-            }));
+            web::block(move || state_into.blacklist_token(&claims_into.jti, claims_into.exp))
+                .await??;
         }
-    }
-
-    if let Some(fut) = access_blacklist_fut {
-        fut.await??
-    }
-    if let Some(fut) = refresh_blacklist_fut {
-        fut.await??
     }
 
     Ok(())
