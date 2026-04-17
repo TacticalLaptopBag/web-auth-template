@@ -48,7 +48,7 @@ impl AppState {
                     password_hash: &hash_password(init_password)?,
                 })?;
             } else {
-                panic!("No users exist, and INIT_USER_NAME or INIT_USER_PASS is not set!");
+                log::warn!("No users exist, and INIT_USER_NAME or INIT_USER_PASS is not set!");
             }
         }
 
