@@ -56,6 +56,7 @@ impl ResponseError for AppError {
         let body = ErrorBody {
             error: self.to_string(),
         };
+        log::error!("Responding with error: {}", body.error);
         match self {
             Self::AuthInvalidCredentials
             | Self::AuthInvalidToken
