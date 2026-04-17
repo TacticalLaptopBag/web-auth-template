@@ -7,7 +7,7 @@ pub mod db;
 // ── Request / response shapes ────────────────────────────────────────────────
 
 /// Form body for POST /login
-#[derive(Deserialize)]
+#[derive(Deserialize, Clone)]
 pub struct LoginForm {
     pub username: String,
     pub password: String,

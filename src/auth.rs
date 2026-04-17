@@ -1,6 +1,8 @@
 use crate::{
     error::{AppError, AppResult},
-    models::{AuthResponse, ChangePasswordForm, Claims, LoginForm, TokenKind, UserInfo},
+    models::{
+        AuthResponse, ChangePasswordForm, Claims, LoginForm, TokenKind, UserInfo, db::user::User,
+    },
     store::AppState,
 };
 use actix_web::FromRequest;
@@ -100,6 +102,40 @@ fn clear_cookie(name: &'static str, use_secure: bool) -> Cookie<'static> {
         .finish()
 }
 
+pub struct AuthCookies<'c> {
+    pub access_cookie: Cookie<'c>,
+    pub refresh_cookie: Cookie<'c>,
+}
+
+pub fn create_access_cookies<'c>(state: &AppState, user: &User) -> AppResult<AuthCookies<'c>> {
+    let access = make_token(&state, &user.id, &user.username, TokenKind::Access)?;
+    let refresh = make_token(&state, &user.id, &user.username, TokenKind::Refresh)?;
+
+    let access_cookie = auth_cookie(
+        ACCESS_COOKIE,
+        access,
+        state.config.jwt_expiry_secs,
+        state.config.use_secure_cookies,
+    );
+    let refresh_cookie = auth_cookie(
+        REFRESH_COOKIE,
+        refresh,
+        state.config.jwt_refresh_expiry_secs,
+        state.config.use_secure_cookies,
+    );
+    Ok(AuthCookies {
+        access_cookie,
+        refresh_cookie,
+    })
+}
+
+pub fn clear_access_cookies<'c>(state: &AppState) -> AuthCookies<'c> {
+    AuthCookies {
+        access_cookie: clear_cookie(ACCESS_COOKIE, state.config.use_secure_cookies),
+        refresh_cookie: clear_cookie(REFRESH_COOKIE, state.config.use_secure_cookies),
+    }
+}
+
 // ── Handlers ──────────────────────────────────────────────────────────────────
 
 /// POST /login — validate credentials, issue access + refresh tokens as cookies.
@@ -125,25 +161,10 @@ pub async fn login_post(
         return Err(AppError::AuthInvalidCredentials);
     }
 
-    let access = make_token(&state, &user.id, &user.username, TokenKind::Access)?;
-    let refresh = make_token(&state, &user.id, &user.username, TokenKind::Refresh)?;
-
-    let access_cookie = auth_cookie(
-        ACCESS_COOKIE,
-        access,
-        state.config.jwt_expiry_secs,
-        state.config.use_secure_cookies,
-    );
-    let refresh_cookie = auth_cookie(
-        REFRESH_COOKIE,
-        refresh,
-        state.config.jwt_refresh_expiry_secs,
-        state.config.use_secure_cookies,
-    );
-
+    let cookies = create_access_cookies(&state, &user)?;
     Ok(HttpResponse::Ok()
-        .cookie(access_cookie)
-        .cookie(refresh_cookie)
+        .cookie(cookies.access_cookie)
+        .cookie(cookies.refresh_cookie)
         .json(AuthResponse {
             message: "Logged in successfully".into(),
         }))
@@ -165,10 +186,7 @@ pub async fn login_get(claims: Claims, state: web::Data<AppState>) -> AppResult<
 }
 
 /// POST /refresh — use the refresh token cookie to issue a new access token.
-pub async fn refresh_post(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-) -> AppResult<HttpResponse> {
+pub async fn refresh_post(req: HttpRequest, state: web::Data<AppState>) -> AppResult<HttpResponse> {
     let token = cookie_value(&req, REFRESH_COOKIE).ok_or(AppError::AuthMissingToken)?;
     let claims = verify_token(&state, &token)?;
 
@@ -228,14 +246,10 @@ pub async fn refresh_post(
         }))
 }
 
-/// POST /logout — blacklist both tokens and clear their cookies.
-pub async fn logout_post(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-) -> AppResult<HttpResponse> {
+pub async fn blacklist_tokens(req: &HttpRequest, state: web::Data<AppState>) -> AppResult<()> {
     // Blacklist the access token if present and valid
     let mut access_blacklist_fut = None;
-    if let Some(token) = cookie_value(&req, ACCESS_COOKIE) {
+    if let Some(token) = cookie_value(req, ACCESS_COOKIE) {
         if let Ok(claims) = verify_token(&state, &token) {
             let state_into = state.clone();
             let claims_into = claims.clone();
@@ -264,12 +278,16 @@ pub async fn logout_post(
         fut.await??
     }
 
+    Ok(())
+}
+
+/// POST /logout — blacklist both tokens and clear their cookies.
+pub async fn logout_post(req: HttpRequest, state: web::Data<AppState>) -> AppResult<HttpResponse> {
+    blacklist_tokens(&req, state.clone()).await?;
+    let cleared_cookies = clear_access_cookies(&state);
     Ok(HttpResponse::Ok()
-        .cookie(clear_cookie(ACCESS_COOKIE, state.config.use_secure_cookies))
-        .cookie(clear_cookie(
-            REFRESH_COOKIE,
-            state.config.use_secure_cookies,
-        ))
+        .cookie(cleared_cookies.access_cookie)
+        .cookie(cleared_cookies.refresh_cookie)
         .json(serde_json::json!({ "message": "Logged out successfully" })))
 }
 
@@ -325,17 +343,4 @@ pub async fn login_put(
     Ok(HttpResponse::Ok().json(serde_json::json!({
         "message": "Password changed successfully"
     })))
-}
-
-pub async fn user_get(
-    id: web::Path<String>,
-    state: web::Data<AppState>,
-) -> AppResult<HttpResponse> {
-    let user = web::block(move || {
-        state
-            .get_user_by_id(&id)?
-            .ok_or(AppError::DbObjectNotFound)
-    })
-    .await??;
-    Ok(HttpResponse::Ok().json(UserInfo::from_user(user)))
 }

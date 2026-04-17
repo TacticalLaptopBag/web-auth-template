@@ -2,8 +2,9 @@ mod auth;
 mod config;
 mod error;
 mod models;
-mod store;
 mod schema;
+mod store;
+mod user;
 
 use actix_web::{App, HttpServer, middleware::Logger, web};
 use store::AppState;
@@ -27,18 +28,19 @@ async fn main() -> std::io::Result<()> {
     log::info!("Starting API on {host}:{port}");
 
     HttpServer::new(move || {
-        App::new()
-            .service(
-                web::scope("/api/v1")
-                    .app_data(state.clone())
-                    .wrap(Logger::default())
-                    .route("/login", web::post().to(auth::login_post))
-                    .route("/login", web::get().to(auth::login_get))
-                    .route("/login", web::put().to(auth::login_put))
-                    .route("/refresh", web::post().to(auth::refresh_post))
-                    .route("/logout", web::post().to(auth::logout_post))
-                    .route("/user/{id}", web::get().to(auth::user_get))
-            )
+        App::new().service(
+            web::scope("/api/v1")
+                .app_data(state.clone())
+                .wrap(Logger::default())
+                .route("/login", web::post().to(auth::login_post))
+                .route("/login", web::get().to(auth::login_get))
+                .route("/login", web::put().to(auth::login_put))
+                .route("/refresh", web::post().to(auth::refresh_post))
+                .route("/logout", web::post().to(auth::logout_post))
+                .route("/user/{id}", web::get().to(user::user_get))
+                .route("/user", web::post().to(user::user_post))
+                .route("/user", web::delete().to(user::user_delete)),
+        )
     })
     .bind((host.as_str(), port))?
     .run()

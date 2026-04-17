@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::error::AppResult;
 use crate::error::AppError;
+use crate::error::AppResult;
 use crate::models::db::user::{BlacklistEntry, NewUser, User};
 use crate::schema::{token_blacklist, users};
 use bcrypt::BcryptResult;
@@ -21,7 +21,7 @@ pub struct AppState {
     pool: DbPool,
 }
 
-fn hash_password(password: &str) -> BcryptResult<String> {
+pub fn hash_password(password: &str) -> BcryptResult<String> {
     bcrypt::hash(password, bcrypt::DEFAULT_COST)
 }
 
@@ -124,6 +124,18 @@ impl AppState {
             .execute(&mut self.get_conn()?)
             .map_err(|e| AppError::DbQueryError(e))?;
         Ok(())
+    }
+
+    pub fn delete_user_with_id(&self, id: &str) -> AppResult<Option<User>> {
+        let user = self.get_user_by_id(id)?;
+        if let Some(user) = user {
+            diesel::delete(users::table.filter(users::id.eq(id)))
+                .execute(&mut self.get_conn()?)
+                .map_err(|e| AppError::DbQueryError(e))?;
+            return Ok(Some(user));
+        }
+
+        return Ok(None);
     }
 
     pub fn update_password(&self, user_id: &str, password: &str) -> AppResult<()> {
