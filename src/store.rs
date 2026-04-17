@@ -1,6 +1,6 @@
 use crate::config::Config;
-use crate::error::BloggerResult;
-use crate::error::db::DbError;
+use crate::error::AppResult;
+use crate::error::AppError;
 use crate::models::db::user::{BlacklistEntry, NewUser, User};
 use crate::schema::{token_blacklist, users};
 use bcrypt::BcryptResult;
@@ -26,7 +26,7 @@ fn hash_password(password: &str) -> BcryptResult<String> {
 }
 
 impl AppState {
-    pub fn new(config: Config) -> BloggerResult<Self> {
+    pub fn new(config: Config) -> AppResult<Self> {
         let manager = ConnectionManager::<SqliteConnection>::new(&config.database_url);
         let pool = Pool::builder()
             .build(manager)
@@ -55,12 +55,12 @@ impl AppState {
         Ok(state)
     }
 
-    fn get_conn(&self) -> BloggerResult<PooledConnection<ConnectionManager<SqliteConnection>>> {
-        Ok(self.pool.get().map_err(|e| DbError::R2d2Error(e))?)
+    fn get_conn(&self) -> AppResult<PooledConnection<ConnectionManager<SqliteConnection>>> {
+        Ok(self.pool.get().map_err(|e| AppError::R2d2Error(e))?)
     }
 
     /// Add a JTI to the blacklist.
-    pub fn blacklist_token(&self, other_jti: &str, exp: i64) -> BloggerResult<()> {
+    pub fn blacklist_token(&self, other_jti: &str, exp: i64) -> AppResult<()> {
         let exp_datetime = DateTime::from_timestamp_secs(exp)
             .expect("Expiration time cannot be parsed")
             .naive_utc();
@@ -78,24 +78,24 @@ impl AppState {
     }
 
     /// Returns `true` if the JTI is currently blacklisted.
-    pub fn is_blacklisted(&self, jti: &str) -> BloggerResult<bool> {
+    pub fn is_blacklisted(&self, jti: &str) -> AppResult<bool> {
         Ok(diesel::select(exists(
             token_blacklist::table.filter(token_blacklist::jti.eq(jti)),
         ))
         .get_result(&mut self.get_conn()?)
-        .map_err(|e| DbError::QueryError(e))?)
+        .map_err(|e| AppError::DbQueryError(e))?)
     }
 
     /// Remove expired entries from the blacklist.
-    fn prune_blacklist(&self) -> BloggerResult<()> {
+    fn prune_blacklist(&self) -> AppResult<()> {
         let now = Utc::now().naive_utc();
         diesel::delete(token_blacklist::table.filter(token_blacklist::expires_at.lt(now)))
             .execute(&mut self.get_conn()?)
-            .map_err(|e| DbError::QueryError(e))?;
+            .map_err(|e| AppError::DbQueryError(e))?;
         Ok(())
     }
 
-    pub fn get_user_by_name(&self, username: &str) -> BloggerResult<Option<User>> {
+    pub fn get_user_by_name(&self, username: &str) -> AppResult<Option<User>> {
         Ok(users::table
             .filter(users::username.eq(username))
             .load::<User>(&mut self.get_conn()?)
@@ -103,7 +103,7 @@ impl AppState {
             .and_then(|users| users.into_iter().next()))
     }
 
-    pub fn get_user_by_id(&self, id: &str) -> BloggerResult<Option<User>> {
+    pub fn get_user_by_id(&self, id: &str) -> AppResult<Option<User>> {
         Ok(users::table
             .filter(users::id.eq(id))
             .load::<User>(&mut self.get_conn()?)
@@ -111,28 +111,28 @@ impl AppState {
             .and_then(|users| users.into_iter().next()))
     }
 
-    pub fn get_user_count(&self) -> BloggerResult<i64> {
+    pub fn get_user_count(&self) -> AppResult<i64> {
         Ok(users::table
             .count()
             .get_result(&mut self.get_conn()?)
-            .map_err(|e| DbError::QueryError(e))?)
+            .map_err(|e| AppError::DbQueryError(e))?)
     }
 
-    pub fn create_user(&self, user: NewUser) -> BloggerResult<()> {
+    pub fn create_user(&self, user: NewUser) -> AppResult<()> {
         diesel::insert_into(users::table)
             .values(&user)
             .execute(&mut self.get_conn()?)
-            .map_err(|e| DbError::QueryError(e))?;
+            .map_err(|e| AppError::DbQueryError(e))?;
         Ok(())
     }
 
-    pub fn update_password(&self, user_id: &str, password: &str) -> BloggerResult<()> {
+    pub fn update_password(&self, user_id: &str, password: &str) -> AppResult<()> {
         let hash = hash_password(password)?;
         diesel::update(users::table)
             .filter(users::id.eq(user_id))
             .set(users::password_hash.eq(hash))
             .execute(&mut self.get_conn()?)
-            .map_err(|e| DbError::QueryError(e))?;
+            .map_err(|e| AppError::DbQueryError(e))?;
         Ok(())
     }
 }
