@@ -3,7 +3,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::{
-    auth::{blacklist_tokens, clear_access_cookies, create_access_cookies},
+    api::auth::{blacklist_tokens, clear_access_cookies, create_access_cookies},
     error::{AppError, AppResult},
     models::{Claims, LoginForm, UserInfo, db::user::NewUser},
     store::{AppState, hash_password},
